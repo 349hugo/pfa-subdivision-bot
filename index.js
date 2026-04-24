@@ -51,6 +51,10 @@ const RESULT_CHANNEL_IDS = {
   halcon: process.env.RESULTS_HALCON_CHANNEL_ID,
 };
 
+const COOLDOWN_MANAGER_ROLE_NAMES = parseRoleNames(
+  process.env.COOLDOWN_MANAGER_ROLE_NAMES || "🦅・Head Halcon,🪽・Head Geof",
+);
+
 const ROLE_NAMES_BY_SUBDIVISION = {
   geof: parseRoleNames(process.env.GEOF_ROLE_NAMES || "G.E.O.F,tactico"),
   halcon: parseRoleNames(
@@ -175,7 +179,6 @@ const commands = [
   new SlashCommandBuilder()
     .setName("quitar-cooldown")
     .setDescription("Quita manualmente el cooldown de repostulacion a un usuario")
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
     .addUserOption((option) =>
       option
         .setName("usuario")
@@ -839,6 +842,29 @@ async function tryStartApplication(interaction) {
 }
 
 async function handleRemoveCooldownCommand(interaction) {
+  const canManageCooldown = await memberCanManageCooldown(interaction);
+
+  if (!canManageCooldown) {
+    await interaction.reply({
+      embeds: [
+        buildNoticeEmbed({
+          color: EMBED_COLORS.danger,
+          title: "❌ Sin permisos",
+          description:
+            "Solo los rangos autorizados pueden usar este comando.",
+          fields: [
+            {
+              name: "Roles permitidos",
+              value: COOLDOWN_MANAGER_ROLE_NAMES.join(", "),
+            },
+          ],
+        }),
+      ],
+      ephemeral: true,
+    });
+    return;
+  }
+
   const targetUser = interaction.options.getUser("usuario", true);
   const existingCooldown = getActiveReapplyCooldown(targetUser.id);
 
@@ -889,6 +915,30 @@ async function handleRemoveCooldownCommand(interaction) {
       }),
     ],
     ephemeral: true,
+  });
+}
+
+async function memberCanManageCooldown(interaction) {
+  if (!interaction.inGuild()) {
+    return false;
+  }
+
+  const member = await interaction.guild.members
+    .fetch(interaction.user.id)
+    .catch(() => null);
+
+  if (!member) {
+    return false;
+  }
+
+  await interaction.guild.roles.fetch().catch(() => null);
+
+  return COOLDOWN_MANAGER_ROLE_NAMES.some((roleName) => {
+    const normalizedTargetRoleName = normalizeRoleLookup(roleName);
+
+    return member.roles.cache.some(
+      (role) => normalizeRoleLookup(role.name) === normalizedTargetRoleName,
+    );
   });
 }
 
