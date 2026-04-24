@@ -172,6 +172,16 @@ const commands = [
   new SlashCommandBuilder()
     .setName("postularme")
     .setDescription("Abre el formulario de postulacion"),
+  new SlashCommandBuilder()
+    .setName("quitar-cooldown")
+    .setDescription("Quita manualmente el cooldown de repostulacion a un usuario")
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .addUserOption((option) =>
+      option
+        .setName("usuario")
+        .setDescription("Usuario al que quieres quitarle el cooldown")
+        .setRequired(true),
+    ),
 ];
 
 const client = new Client({
@@ -203,6 +213,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       if (interaction.commandName === "postularme") {
         await tryStartApplication(interaction);
+        return;
+      }
+
+      if (interaction.commandName === "quitar-cooldown") {
+        await handleRemoveCooldownCommand(interaction);
       }
 
       return;
@@ -823,6 +838,60 @@ async function tryStartApplication(interaction) {
   );
 }
 
+async function handleRemoveCooldownCommand(interaction) {
+  const targetUser = interaction.options.getUser("usuario", true);
+  const existingCooldown = getActiveReapplyCooldown(targetUser.id);
+
+  clearReapplyCooldown(targetUser.id);
+
+  const latestLogMessage = await findLatestApplicationLogMessage(
+    interaction.client,
+    targetUser.id,
+  );
+
+  let logUpdated = false;
+  if (latestLogMessage?.embeds?.[0]) {
+    const latestEmbed = latestLogMessage.embeds[0];
+    const statusField = findEmbedField(latestEmbed, "Estado");
+    const normalizedStatus = statusField
+      ? normalizeStatusValue(statusField.value)
+      : "";
+
+    if (normalizedStatus.includes("rechazada")) {
+      await markCooldownAsRemovedOnLog({
+        message: latestLogMessage,
+        reviewer: interaction.user,
+      });
+      logUpdated = true;
+    }
+  }
+
+  const description = existingCooldown || logUpdated
+    ? `${targetUser} ya puede volver a postularse.`
+    : `${targetUser} no tenia un cooldown activo, pero deje la memoria limpia por si acaso.`;
+
+  await interaction.reply({
+    embeds: [
+      buildNoticeEmbed({
+        color: EMBED_COLORS.success,
+        title: "✅ Cooldown removido",
+        description,
+        fields: [
+          {
+            name: "Usuario",
+            value: `${targetUser.tag}\nID: ${targetUser.id}`,
+          },
+          {
+            name: "Registro actualizado",
+            value: logUpdated ? "Si" : "No encontre una postulacion rechazada reciente para editar.",
+          },
+        ],
+      }),
+    ],
+    ephemeral: true,
+  });
+}
+
 async function hydrateReapplyCooldowns(client) {
   activeReapplyCooldowns.clear();
 
@@ -869,8 +938,17 @@ async function hydrateReapplyCooldowns(client) {
       const normalizedStatus = statusField
         ? normalizeStatusValue(statusField.value)
         : "";
+      const cooldownField = findEmbedField(embed, "Cooldown");
+      const normalizedCooldown = cooldownField
+        ? normalizeRoleLookup(cooldownField.value)
+        : "";
 
       if (!normalizedStatus) {
+        continue;
+      }
+
+      if (normalizedCooldown.includes("removido manualmente")) {
+        resolvedApplicants.add(applicantId);
         continue;
       }
 
@@ -1109,6 +1187,79 @@ async function sendDecisionDm({
 function formatDiscordTimestamp(timestamp) {
   const unixTimestamp = Math.floor(timestamp / 1000);
   return `<t:${unixTimestamp}:F>\n<t:${unixTimestamp}:R>`;
+}
+
+async function findLatestApplicationLogMessage(client, userId) {
+  const logChannel = await client.channels
+    .fetch(process.env.LOG_CHANNEL_ID)
+    .catch(() => null);
+
+  if (!logChannel || !logChannel.isTextBased() || !logChannel.messages?.fetch) {
+    return null;
+  }
+
+  let before;
+  let scannedMessages = 0;
+
+  while (scannedMessages < COOLDOWN_LOOKUP_LIMIT) {
+    const batchSize = Math.min(100, COOLDOWN_LOOKUP_LIMIT - scannedMessages);
+    const messages = await logChannel.messages
+      .fetch({ limit: batchSize, before })
+      .catch(() => null);
+
+    if (!messages || messages.size === 0) {
+      break;
+    }
+
+    const orderedMessages = [...messages.values()].sort(
+      (first, second) => second.createdTimestamp - first.createdTimestamp,
+    );
+
+    for (const message of orderedMessages) {
+      scannedMessages += 1;
+
+      const embed = message.embeds[0];
+      if (!embed) {
+        continue;
+      }
+
+      if (extractApplicantIdFromEmbed(embed) === userId) {
+        return message;
+      }
+    }
+
+    const oldestMessage = orderedMessages[orderedMessages.length - 1];
+    if (!oldestMessage) {
+      break;
+    }
+
+    before = oldestMessage.id;
+  }
+
+  return null;
+}
+
+async function markCooldownAsRemovedOnLog({ message, reviewer }) {
+  const updatedEmbed = new EmbedBuilder(message.embeds[0].toJSON());
+  const fieldsWithoutCooldown = (updatedEmbed.data.fields || []).filter(
+    (field) =>
+      !["repostulacion disponible", "cooldown"].includes(
+        normalizeRoleLookup(field.name),
+      ),
+  );
+
+  updatedEmbed.setFields(
+    ...fieldsWithoutCooldown,
+    {
+      name: "Cooldown",
+      value: `Removido manualmente por ${reviewer}.\n${formatDiscordTimestamp(Date.now())}`,
+    },
+  );
+
+  await message.edit({
+    embeds: [updatedEmbed],
+    components: message.components,
+  });
 }
 
 client.login(process.env.DISCORD_TOKEN);
