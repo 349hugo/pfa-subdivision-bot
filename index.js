@@ -51,6 +51,18 @@ const RESULT_CHANNEL_IDS = {
   halcon: process.env.RESULTS_HALCON_CHANNEL_ID,
 };
 
+const REVIEW_MENTION_ROLE_NAMES = parseRoleNames(
+  process.env.REVIEW_MENTION_ROLE_NAMES || "Head Halcon,Head Geof",
+);
+const UPDATE_CHANNEL_IDS = {
+  geof: process.env.UPDATES_GEOF_CHANNEL_ID || "1493838384416952392",
+  halcon: process.env.UPDATES_HALCON_CHANNEL_ID || "1493446131663896626",
+};
+const UPDATE_ROLE_NAMES = {
+  geof: process.env.UPDATES_GEOF_ROLE_NAME || "Tactico",
+  halcon: process.env.UPDATES_HALCON_ROLE_NAME || "Cadete Halcon",
+};
+
 const COOLDOWN_MANAGER_ROLE_NAMES = parseRoleNames(
   process.env.COOLDOWN_MANAGER_ROLE_NAMES || "🦅・Head Halcon,🪽・Head Geof",
 );
@@ -497,8 +509,14 @@ async function handleFinalSubmission(interaction) {
 
   const subdivision = normalizeAnswer(answers.subdivision);
   const reviewRow = buildReviewButtons(subdivision, interaction.user.id);
+  const reviewMentionRoles = await resolveRolesByNames(
+    interaction.guild,
+    REVIEW_MENTION_ROLE_NAMES,
+  );
 
   await logChannel.send({
+    content: buildRoleMentionContent(reviewMentionRoles.roles),
+    allowedMentions: buildRoleAllowedMentions(reviewMentionRoles.roles),
     embeds: [logEmbed],
     components: [reviewRow],
   });
@@ -622,6 +640,7 @@ async function handleReviewButton(interaction) {
   const member = await interaction.guild.members.fetch(applicantId).catch(() => null);
 
   let roleSummary = "No se asignaron roles.";
+  let approvalUpdateMessage = "";
   let cooldownEndsAt = null;
   if (action === "approve") {
     clearReapplyCooldown(applicantId);
@@ -631,6 +650,19 @@ async function handleReviewButton(interaction) {
       subdivision,
     });
     roleSummary = roleResult.message;
+
+    if (roleResult.ok) {
+      const approvalUpdateResult = await sendApprovalUpdate({
+        client: interaction.client,
+        guild: interaction.guild,
+        applicantId,
+        subdivision,
+      });
+      approvalUpdateMessage = approvalUpdateResult.message;
+    } else {
+      approvalUpdateMessage =
+        "No envie el update al canal correspondiente porque la asignacion de roles no quedo completa.";
+    }
   } else {
     cooldownEndsAt = setReapplyCooldown(applicantId, subdivision);
   }
@@ -704,7 +736,7 @@ async function handleReviewButton(interaction) {
   await interaction.followUp({
     content:
       action === "approve"
-        ? `Postulacion aprobada. ${roleSummary} ${dmResult.message}`
+        ? `Postulacion aprobada. ${roleSummary} ${approvalUpdateMessage} ${dmResult.message}`
         : `Postulacion rechazada y enviada al canal de resultados. ${dmResult.message}`,
     ephemeral: true,
   });
@@ -723,6 +755,7 @@ function disableMessageButtons(componentRows) {
 async function assignSubdivisionRoles({ guild, member, subdivision }) {
   if (!member) {
     return {
+      ok: false,
       message: "No pude asignar roles porque el usuario ya no esta en el servidor.",
     };
   }
@@ -730,6 +763,7 @@ async function assignSubdivisionRoles({ guild, member, subdivision }) {
   const roleNames = ROLE_NAMES_BY_SUBDIVISION[subdivision] || [];
   if (roleNames.length === 0) {
     return {
+      ok: false,
       message: "No hay roles configurados para esta subdivision.",
     };
   }
@@ -759,6 +793,7 @@ async function assignSubdivisionRoles({ guild, member, subdivision }) {
     } catch (error) {
       console.error("No pude asignar los roles.", error);
       return {
+        ok: false,
         message:
           "La postulacion se aprobo, pero no pude asignar los roles. Revisa permisos y jerarquia del bot.",
       };
@@ -767,11 +802,13 @@ async function assignSubdivisionRoles({ guild, member, subdivision }) {
 
   if (missingRoles.length > 0) {
     return {
+      ok: false,
       message: `Se aprobo, pero no encontre estos roles: ${missingRoles.join(", ")}.`,
     };
   }
 
   return {
+    ok: true,
     message: `Roles asignados: ${roleNames.join(", ")}.`,
   };
 }
@@ -800,6 +837,93 @@ function normalizeRoleLookup(value) {
     .replace(/[^a-z0-9]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+async function resolveRolesByNames(guild, roleNames) {
+  await guild.roles.fetch().catch(() => null);
+
+  const roles = [];
+  const missing = [];
+
+  roleNames.forEach((roleName) => {
+    const role = findRoleByName(guild, roleName);
+
+    if (role) {
+      roles.push(role);
+    } else {
+      missing.push(roleName);
+    }
+  });
+
+  return { roles, missing };
+}
+
+function findRoleByName(guild, roleName) {
+  const normalizedTargetRoleName = normalizeRoleLookup(roleName);
+
+  return guild.roles.cache.find(
+    (candidate) =>
+      normalizeRoleLookup(candidate.name) === normalizedTargetRoleName,
+  );
+}
+
+function buildRoleMentionContent(roles) {
+  if (!roles || roles.length === 0) {
+    return undefined;
+  }
+
+  return roles.map((role) => `<@&${role.id}>`).join(" ");
+}
+
+function buildRoleAllowedMentions(roles) {
+  if (!roles || roles.length === 0) {
+    return undefined;
+  }
+
+  return {
+    roles: roles.map((role) => role.id),
+  };
+}
+
+async function sendApprovalUpdate({ client, guild, applicantId, subdivision }) {
+  const channelId = UPDATE_CHANNEL_IDS[subdivision];
+  if (!channelId) {
+    return {
+      ok: false,
+      message: "No encontre configurado el canal de updates para esta subdivision.",
+    };
+  }
+
+  const updateChannel = await client.channels.fetch(channelId).catch(() => null);
+  if (!updateChannel || !updateChannel.isTextBased()) {
+    return {
+      ok: false,
+      message: "No pude encontrar el canal de updates correspondiente.",
+    };
+  }
+
+  const targetRoleName = UPDATE_ROLE_NAMES[subdivision];
+  const targetRole = findRoleByName(guild, targetRoleName);
+
+  if (!targetRole) {
+    return {
+      ok: false,
+      message: `No pude encontrar el rol de update para ${formatSubdivision(subdivision)}.`,
+    };
+  }
+
+  await updateChannel.send({
+    content: `**NEW** <@${applicantId}> > <@&${targetRole.id}>`,
+    allowedMentions: {
+      users: [applicantId],
+      roles: [targetRole.id],
+    },
+  });
+
+  return {
+    ok: true,
+    message: "Envie el update al canal correspondiente.",
+  };
 }
 
 async function tryStartApplication(interaction) {
