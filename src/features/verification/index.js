@@ -80,7 +80,7 @@ function createVerificationFeature({ config }) {
         {
           name: "Importante",
           value:
-            "Este panel es para usuarios nuevos. Si ya estas verificado, el bot no te dara el rol otra vez.",
+            "Este panel es para usuarios nuevos sin roles. Si ya estas verificado o ya tienes otros roles, no necesitas usarlo.",
         },
       )
       .setFooter({ text: "Si el boton falla, avisa a un staff." });
@@ -156,6 +156,31 @@ function createVerificationFeature({ config }) {
             color: EMBED_COLORS.warning,
             title: "Ya estabas verificado",
             description: `Ya tienes el rol ${config.verification.roleName}.`,
+          }),
+        ],
+        ephemeral: true,
+      });
+      return;
+    }
+
+    const extraRoles = member.roles.cache.filter(
+      (role) => role.id !== interaction.guild.id && role.id !== verifiedRole.id,
+    );
+
+    if (config.verification.onlyAllowMembersWithoutRoles && extraRoles.size > 0) {
+      await interaction.reply({
+        embeds: [
+          buildNoticeEmbed({
+            color: EMBED_COLORS.warning,
+            title: "Ya tienes roles en el servidor",
+            description:
+              "Este panel es solo para miembros nuevos que aun no tienen roles. Si necesitas ayuda, habla con un staff.",
+            fields: [
+              {
+                name: "Roles detectados",
+                value: extraRoles.map((role) => role.name).join(", "),
+              },
+            ],
           }),
         ],
         ephemeral: true,

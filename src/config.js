@@ -17,6 +17,7 @@ function loadConfig(env = process.env) {
     verification: {
       channelId: env.VERIFICATION_CHANNEL_ID || "1332474049762427004",
       roleName: env.VERIFIED_ROLE_NAME || "🔥┃Hispanos RP",
+      onlyAllowMembersWithoutRoles: env.VERIFICATION_ONLY_NO_ROLES !== "false",
     },
     resultChannelIds: {
       geof: env.RESULTS_GEOF_CHANNEL_ID,
