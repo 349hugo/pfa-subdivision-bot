@@ -21,9 +21,13 @@ client.once(Events.ClientReady, async (readyClient) => {
   console.log(`Bot listo como ${readyClient.user.tag}`);
 
   try {
-    const guild = await readyClient.guilds.fetch(config.guildId);
-    await guild.commands.set(commands.map((command) => command.toJSON()));
-    console.log(`Comandos registrados en el servidor ${guild.name}`);
+    const guilds = await readyClient.guilds.fetch();
+
+    for (const guildPreview of guilds.values()) {
+      const guild = await readyClient.guilds.fetch(guildPreview.id);
+      await guild.commands.set(commands.map((command) => command.toJSON()));
+      console.log(`Comandos registrados en el servidor ${guild.name}`);
+    }
 
     for (const feature of features) {
       if (typeof feature.onReady === "function") {

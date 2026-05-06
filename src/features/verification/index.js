@@ -18,6 +18,8 @@ const EMBED_COLORS = {
   warning: 0xf5b041,
 };
 
+const PANEL_TITLE = "Verificacion del servidor";
+
 function createVerificationFeature({ config }) {
   const commands = [
     new SlashCommandBuilder()
@@ -46,12 +48,14 @@ function createVerificationFeature({ config }) {
     return false;
   }
 
-  async function sendVerificationPanel(interaction) {
-    const verificationChannel = await interaction.client.channels
-      .fetch(config.verification.channelId)
-      .catch(() => null);
+  async function onReady(client) {
+    await ensureVerificationPanel(client);
+  }
 
-    if (!verificationChannel || !verificationChannel.isTextBased()) {
+  async function sendVerificationPanel(interaction) {
+    const result = await ensureVerificationPanel(interaction.client);
+
+    if (!result.ok) {
       await interaction.reply({
         embeds: [
           buildNoticeEmbed({
@@ -66,43 +70,12 @@ function createVerificationFeature({ config }) {
       return;
     }
 
-    const panelEmbed = new EmbedBuilder()
-      .setColor(EMBED_COLORS.primary)
-      .setTitle("Verificacion del servidor")
-      .setDescription(
-        "Pulsa el boton de abajo para verificarte y recibir acceso al resto del servidor.",
-      )
-      .addFields(
-        {
-          name: "Rol que recibes",
-          value: config.verification.roleName,
-        },
-        {
-          name: "Importante",
-          value:
-            "Este panel es para usuarios nuevos sin roles. Si ya estas verificado o ya tienes otros roles, no necesitas usarlo.",
-        },
-      )
-      .setFooter({ text: "Si el boton falla, avisa a un staff." });
-
-    const row = new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setCustomId(IDS.verifyButton)
-        .setLabel("Verificarme")
-        .setStyle(ButtonStyle.Success),
-    );
-
-    await verificationChannel.send({
-      embeds: [panelEmbed],
-      components: [row],
-    });
-
     await interaction.reply({
       embeds: [
         buildNoticeEmbed({
           color: EMBED_COLORS.success,
-          title: "Panel publicado",
-          description: `El panel de verificacion fue enviado a <#${config.verification.channelId}>.`,
+          title: result.created ? "Panel publicado" : "Panel actualizado",
+          description: `El panel de verificacion esta listo en <#${config.verification.channelId}>.`,
         }),
       ],
       ephemeral: true,
@@ -231,7 +204,72 @@ function createVerificationFeature({ config }) {
 
   return {
     commands,
+    onReady,
     handleInteraction,
+  };
+
+  async function ensureVerificationPanel(client) {
+    const verificationChannel = await client.channels
+      .fetch(config.verification.channelId)
+      .catch(() => null);
+
+    if (!verificationChannel || !verificationChannel.isTextBased()) {
+      return { ok: false };
+    }
+
+    const panelPayload = buildPanelPayload(config);
+    const recentMessages = await verificationChannel.messages
+      .fetch({ limit: 25 })
+      .catch(() => null);
+
+    const existingPanel = recentMessages?.find((message) =>
+      message.author?.id === client.user.id
+      && message.embeds?.[0]?.title === PANEL_TITLE
+      && message.components.some((row) =>
+        row.components.some((component) => component.customId === IDS.verifyButton),
+      ),
+    );
+
+    if (existingPanel) {
+      await existingPanel.edit(panelPayload).catch(() => null);
+      return { ok: true, created: false };
+    }
+
+    await verificationChannel.send(panelPayload);
+    return { ok: true, created: true };
+  }
+}
+
+function buildPanelPayload(config) {
+  const panelEmbed = new EmbedBuilder()
+    .setColor(EMBED_COLORS.primary)
+    .setTitle(PANEL_TITLE)
+    .setDescription(
+      "Pulsa el boton de abajo para verificarte y recibir acceso al resto del servidor.",
+    )
+    .addFields(
+      {
+        name: "Rol que recibes",
+        value: config.verification.roleName,
+      },
+      {
+        name: "Importante",
+        value:
+          "Este panel es para usuarios nuevos sin roles. Si ya estas verificado o ya tienes otros roles, no necesitas usarlo.",
+      },
+    )
+    .setFooter({ text: "Si el boton falla, avisa a un staff." });
+
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(IDS.verifyButton)
+      .setLabel("Verificarme")
+      .setStyle(ButtonStyle.Success),
+  );
+
+  return {
+    embeds: [panelEmbed],
+    components: [row],
   };
 }
 

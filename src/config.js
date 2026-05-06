@@ -1,4 +1,4 @@
-const REQUIRED_ENV = ["DISCORD_TOKEN", "GUILD_ID", "LOG_CHANNEL_ID"];
+const REQUIRED_ENV = ["DISCORD_TOKEN", "LOG_CHANNEL_ID"];
 
 function loadConfig(env = process.env) {
   const missing = REQUIRED_ENV.filter((key) => !env[key]);
@@ -11,7 +11,7 @@ function loadConfig(env = process.env) {
 
   return {
     token: env.DISCORD_TOKEN,
-    guildId: env.GUILD_ID,
+    guildId: env.GUILD_ID || null,
     logChannelId: env.LOG_CHANNEL_ID,
     applicationName: env.APPLICATION_NAME || "PFA-SUBDIVISION",
     verification: {
