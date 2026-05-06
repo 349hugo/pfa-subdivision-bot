@@ -4,9 +4,13 @@ const { Client, Events, GatewayIntentBits } = require("discord.js");
 
 const { loadConfig } = require("./config");
 const { createApplicationsFeature } = require("./features/applications");
+const { createVerificationFeature } = require("./features/verification");
 
 const config = loadConfig(process.env);
-const features = [createApplicationsFeature({ config })];
+const features = [
+  createVerificationFeature({ config }),
+  createApplicationsFeature({ config }),
+];
 const commands = features.flatMap((feature) => feature.commands || []);
 
 const client = new Client({

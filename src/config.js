@@ -14,6 +14,10 @@ function loadConfig(env = process.env) {
     guildId: env.GUILD_ID,
     logChannelId: env.LOG_CHANNEL_ID,
     applicationName: env.APPLICATION_NAME || "PFA-SUBDIVISION",
+    verification: {
+      channelId: env.VERIFICATION_CHANNEL_ID || "1332474049762427004",
+      roleName: env.VERIFIED_ROLE_NAME || "🔥┃Hispanos RP",
+    },
     resultChannelIds: {
       geof: env.RESULTS_GEOF_CHANNEL_ID,
       halcon: env.RESULTS_HALCON_CHANNEL_ID,
